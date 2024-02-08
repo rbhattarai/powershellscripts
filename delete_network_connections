@@ -2,6 +2,30 @@
 Yes, you can use PowerShell to disconnect all previous NAS connections to the server shared locations. The error message indicates that there are multiple connections to the server using different user names. To resolve this, you can disconnect all existing connections before establishing a new one. Here's a PowerShell script that you can use to achieve this:
 
 powershell
+# Get the current user's username
+$currentUsername = $env:USERNAME
+
+# Get a list of all network connections
+$networkConnections = Get-WmiObject Win32_NetworkConnection
+
+# Loop through each network connection
+foreach ($connection in $networkConnections) {
+    # Check if the connection is to the specified server
+    if ($connection.RemoteServer -eq "\\server") {
+        # Check if the connection is using a different username
+        if ($connection.UserName -ne $currentUsername) {
+            # Disconnect the network connection
+            Write-Host "Disconnecting: $($connection.RemoteServer)\$($connection.ShareName)"
+            Invoke-Command -ScriptBlock { net use $using:connection.LocalName /delete } -Credential $connection.Get-Credential()
+        }
+    }
+}
+
+# Now you can establish a new connection using the updated Service Account credentials
+# For example:
+# net use \\server\folder\subfolder /user:ServiceAccountName ServiceAccountPassword
+# Replace "server" with the actual server name and adjust the path as needed. Also, replace "ServiceAccountName" and "ServiceAccountPassword" with the updated credentials.
+
 
 
 This script retrieves all network connections and iterates through them. If it finds connections to the specified server with a different username, it disconnects those connections. After running this script, you should be able to run your tests without encountering the multiple connections error.
