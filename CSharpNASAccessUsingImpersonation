@@ -1,51 +1,58 @@
 using System;
-using System.Collections.Generic;
-using System.IO;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
+using Microsoft.Win32.SafeHandles;
 
 public class Impersonation : IDisposable
 {
-    private WindowsImpersonationContext _context;
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern bool LogonUser(string lpszUsername, string lpszDomain, string lpszPassword,
-        int dwLogonType, int dwLogonProvider, out IntPtr phToken);
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
-    private extern static bool CloseHandle(IntPtr handle);
-
-    private const int LOGON32_LOGON_INTERACTIVE = 2;
-    private const int LOGON32_PROVIDER_DEFAULT = 0;
+    private readonly SafeAccessTokenHandle _safeAccessTokenHandle;
+    private readonly WindowsIdentity _windowsIdentity;
+    private readonly WindowsImpersonationContext _windowsImpersonationContext;
 
     public Impersonation(string domain, string username, string password)
     {
-        IntPtr tokenHandle = IntPtr.Zero;
+        bool returnValue = LogonUser(username, domain, password,
+            Logon32LogonInteractive, Logon32ProviderDefault, out _safeAccessTokenHandle);
 
-        bool success = LogonUser(username, domain, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, out tokenHandle);
-        if (!success)
+        if (!returnValue)
         {
-            throw new UnauthorizedAccessException("LogonUser failed with error code: " + Marshal.GetLastWin32Error());
+            int ret = Marshal.GetLastWin32Error();
+            throw new Win32Exception(ret);
         }
 
-        var identity = new WindowsIdentity(tokenHandle);
-        _context = identity.Impersonate();
-
-        CloseHandle(tokenHandle);
+        _windowsIdentity = new WindowsIdentity(_safeAccessTokenHandle.DangerousGetHandle());
+        _windowsImpersonationContext = _windowsIdentity.Impersonate();
     }
 
     public void Dispose()
     {
-        _context.Undo();
-        _context.Dispose();
+        _windowsImpersonationContext?.Undo();
+        _safeAccessTokenHandle?.Dispose();
+        _windowsIdentity?.Dispose();
     }
 
-    //Usage
+    private const int Logon32LogonInteractive = 2;
+    private const int Logon32ProviderDefault = 0;
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    private static extern bool LogonUser(string lpszUsername, string lpszDomain, string lpszPassword,
+        int dwLogonType, int dwLogonProvider, out SafeAccessTokenHandle phToken);
+}
+
+
+//Usage:
+using System;
+using System.Collections.Generic;
+using System.IO;
+
+public class FileDetailsFetcher
+{
     public Dictionary<string, string> GetFileDetailsFromNASLocation(string folder, string domain, string username, string password)
     {
         var fileDetails = new Dictionary<string, string>();
         string folderNAS = @"\\com.company\nas\project\" + folder;
-    
+
         using (new Impersonation(domain, username, password))
         {
             DirectoryInfo d = new DirectoryInfo(folderNAS);
@@ -56,8 +63,7 @@ public class Impersonation : IDisposable
                 fileDetails.Add(file.Name, file.LastWriteTime.ToString("yyyy-MM-dd HH:mm"));
             }
         }
-    
+
         return fileDetails;
     }
-
 }
