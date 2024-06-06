@@ -1,0 +1,63 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+
+public class Impersonation : IDisposable
+{
+    private WindowsImpersonationContext _context;
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool LogonUser(string lpszUsername, string lpszDomain, string lpszPassword,
+        int dwLogonType, int dwLogonProvider, out IntPtr phToken);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+    private extern static bool CloseHandle(IntPtr handle);
+
+    private const int LOGON32_LOGON_INTERACTIVE = 2;
+    private const int LOGON32_PROVIDER_DEFAULT = 0;
+
+    public Impersonation(string domain, string username, string password)
+    {
+        IntPtr tokenHandle = IntPtr.Zero;
+
+        bool success = LogonUser(username, domain, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, out tokenHandle);
+        if (!success)
+        {
+            throw new UnauthorizedAccessException("LogonUser failed with error code: " + Marshal.GetLastWin32Error());
+        }
+
+        var identity = new WindowsIdentity(tokenHandle);
+        _context = identity.Impersonate();
+
+        CloseHandle(tokenHandle);
+    }
+
+    public void Dispose()
+    {
+        _context.Undo();
+        _context.Dispose();
+    }
+
+    //Usage
+    public Dictionary<string, string> GetFileDetailsFromNASLocation(string folder, string domain, string username, string password)
+    {
+        var fileDetails = new Dictionary<string, string>();
+        string folderNAS = @"\\com.company\nas\project\" + folder;
+    
+        using (new Impersonation(domain, username, password))
+        {
+            DirectoryInfo d = new DirectoryInfo(folderNAS);
+            d.Refresh();
+            var files = d.GetFiles("*.*");
+            foreach (var file in files)
+            {
+                fileDetails.Add(file.Name, file.LastWriteTime.ToString("yyyy-MM-dd HH:mm"));
+            }
+        }
+    
+        return fileDetails;
+    }
+
+}
