@@ -7,8 +7,6 @@ using Microsoft.Win32.SafeHandles;
 public class Impersonation : IDisposable
 {
     private readonly SafeAccessTokenHandle _safeAccessTokenHandle;
-    private readonly WindowsIdentity _windowsIdentity;
-    private readonly WindowsImpersonationContext _windowsImpersonationContext;
 
     public Impersonation(string domain, string username, string password)
     {
@@ -20,16 +18,16 @@ public class Impersonation : IDisposable
             int ret = Marshal.GetLastWin32Error();
             throw new Win32Exception(ret);
         }
+    }
 
-        _windowsIdentity = new WindowsIdentity(_safeAccessTokenHandle.DangerousGetHandle());
-        _windowsImpersonationContext = _windowsIdentity.Impersonate();
+    public void RunImpersonated(Action action)
+    {
+        WindowsIdentity.RunImpersonated(_safeAccessTokenHandle, action);
     }
 
     public void Dispose()
     {
-        _windowsImpersonationContext?.Undo();
         _safeAccessTokenHandle?.Dispose();
-        _windowsIdentity?.Dispose();
     }
 
     private const int Logon32LogonInteractive = 2;
@@ -40,8 +38,7 @@ public class Impersonation : IDisposable
         int dwLogonType, int dwLogonProvider, out SafeAccessTokenHandle phToken);
 }
 
-
-//Usage:
+//USAGE:
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -53,15 +50,18 @@ public class FileDetailsFetcher
         var fileDetails = new Dictionary<string, string>();
         string folderNAS = @"\\com.company\nas\project\" + folder;
 
-        using (new Impersonation(domain, username, password))
+        using (var impersonation = new Impersonation(domain, username, password))
         {
-            DirectoryInfo d = new DirectoryInfo(folderNAS);
-            d.Refresh();
-            var files = d.GetFiles("*.*");
-            foreach (var file in files)
+            impersonation.RunImpersonated(() =>
             {
-                fileDetails.Add(file.Name, file.LastWriteTime.ToString("yyyy-MM-dd HH:mm"));
-            }
+                DirectoryInfo d = new DirectoryInfo(folderNAS);
+                d.Refresh();
+                var files = d.GetFiles("*.*");
+                foreach (var file in files)
+                {
+                    fileDetails.Add(file.Name, file.LastWriteTime.ToString("yyyy-MM-dd HH:mm"));
+                }
+            });
         }
 
         return fileDetails;
